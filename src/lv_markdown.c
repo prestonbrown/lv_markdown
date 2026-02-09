@@ -4,6 +4,7 @@
 #include "md4c.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /* --- Internal data --- */
 
@@ -21,16 +22,65 @@ typedef struct {
 #define MD_FMT_ITALIC (1 << 1)
 #define MD_FMT_CODE   (1 << 2)
 
+/* --- List nesting state --- */
+
+#define MD_LIST_MAX_DEPTH 16
+
+typedef struct {
+    uint8_t  is_ordered;   /**< 0 = bullet, 1 = ordered */
+    uint8_t  is_tight;     /**< 1 = tight list (no P wrappers from md4c) */
+    uint32_t counter;      /**< Current item number for ordered lists */
+} md_list_level_t;
+
 /* --- md4c renderer state --- */
 
 typedef struct {
-    lv_obj_t *             widget;      /**< The markdown widget (container) */
-    lv_markdown_data_t *   data;        /**< Widget data */
-    lv_obj_t *             cur_span;    /**< Current spangroup being built */
-    uint32_t               block_count; /**< Running count of top-level blocks */
-    int                    block_depth; /**< Nesting depth for blocks */
-    uint8_t                fmt_flags;   /**< Active inline formatting (MD_FMT_*) */
+    lv_obj_t *             widget;        /**< The markdown widget (root container) */
+    lv_markdown_data_t *   data;          /**< Widget data */
+    lv_obj_t *             cur_span;      /**< Current spangroup being built */
+    lv_obj_t *             cur_container; /**< Current parent for new blocks (widget or blockquote) */
+    uint32_t               block_count;   /**< Running count of top-level blocks */
+    int                    block_depth;   /**< Nesting depth for blocks */
+    uint8_t                fmt_flags;     /**< Active inline formatting (MD_FMT_*) */
+
+    /* List state */
+    md_list_level_t        list_stack[MD_LIST_MAX_DEPTH];
+    int                    list_depth;        /**< Current list nesting depth (0 = not in list) */
+    uint8_t                li_first_paragraph; /**< 1 if next P inside LI should get bullet/number prefix */
+
+    /* Code block state */
+    uint8_t                in_code_block;  /**< 1 when inside MD_BLOCK_CODE */
+    char *                 code_buf;       /**< Buffer for accumulating code block text */
+    uint32_t               code_buf_len;   /**< Current length of code buffer */
+    uint32_t               code_buf_cap;   /**< Allocated capacity of code buffer */
 } md_render_ctx_t;
+
+/* --- Code block buffer helper --- */
+
+/**
+ * Append text to the code block accumulation buffer, growing as needed.
+ */
+static void code_buf_append(md_render_ctx_t * ctx, const char * text, uint32_t len)
+{
+    if(len == 0) return;
+
+    /* Overflow guard: reject if total would exceed uint32_t */
+    if(len > UINT32_MAX - ctx->code_buf_len - 1) return;
+
+    uint32_t needed = ctx->code_buf_len + len + 1;
+    if(needed > ctx->code_buf_cap) {
+        uint32_t new_cap = ctx->code_buf_cap == 0 ? 256 : ctx->code_buf_cap;
+        while(new_cap < needed) new_cap *= 2;
+        char * new_buf = (char *)lv_realloc(ctx->code_buf, new_cap);
+        if(new_buf == NULL) return;
+        ctx->code_buf = new_buf;
+        ctx->code_buf_cap = new_cap;
+    }
+
+    memcpy(ctx->code_buf + ctx->code_buf_len, text, len);
+    ctx->code_buf_len += len;
+    ctx->code_buf[ctx->code_buf_len] = '\0';
+}
 
 /* --- Inline formatting helper --- */
 
@@ -112,11 +162,47 @@ static void apply_span_formatting(lv_span_t * span, md_render_ctx_t * ctx)
     }
 }
 
+/* --- List prefix helper --- */
+
+/**
+ * Prepend a bullet or number prefix span to a spangroup for a list item.
+ */
+static void prepend_list_prefix(lv_obj_t * sg, md_render_ctx_t * ctx, int level_idx)
+{
+    if(ctx->list_stack[level_idx].is_ordered) {
+        char num_buf[16];
+        snprintf(num_buf, sizeof(num_buf), "%u. ",
+                 (unsigned)ctx->list_stack[level_idx].counter);
+        lv_span_t * prefix = lv_spangroup_add_span(sg);
+        if(prefix != NULL) {
+            lv_span_set_text(prefix, num_buf);
+        }
+    }
+    else {
+        const char * bullet = ctx->data->style.list_bullet;
+        if(bullet != NULL) {
+            char buf[32];
+            size_t blen = strlen(bullet);
+            if(blen < sizeof(buf) - 2) {
+                memcpy(buf, bullet, blen);
+                buf[blen] = ' ';
+                buf[blen + 1] = '\0';
+                lv_span_t * prefix = lv_spangroup_add_span(sg);
+                if(prefix != NULL) {
+                    lv_span_set_text(prefix, buf);
+                }
+            }
+        }
+    }
+}
+
 /* --- Block spacing helper --- */
 
 static void apply_block_spacing(lv_obj_t * block, md_render_ctx_t * ctx)
 {
-    if(lv_obj_get_child_count(ctx->widget) > 1) {
+    /* Use the block's actual parent to check sibling count (works for blockquote children too) */
+    lv_obj_t * parent = lv_obj_get_parent(block);
+    if(lv_obj_get_child_count(parent) > 1) {
         lv_obj_set_style_margin_top(block, ctx->data->style.paragraph_spacing, 0);
     }
 }
@@ -131,13 +217,104 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
 
     switch(type) {
         case MD_BLOCK_DOC:
-            /* Document root — don't count as a block */
+            /* Document root -- don't count as a block */
             break;
+        case MD_BLOCK_UL: {
+            /* Unordered list: push onto list stack */
+            if(ctx->list_depth < MD_LIST_MAX_DEPTH) {
+                MD_BLOCK_UL_DETAIL * ul = (MD_BLOCK_UL_DETAIL *)detail;
+                ctx->list_stack[ctx->list_depth].is_ordered = 0;
+                ctx->list_stack[ctx->list_depth].is_tight = ul->is_tight ? 1 : 0;
+                ctx->list_stack[ctx->list_depth].counter = 0;
+                ctx->list_depth++;
+            }
+            break;
+        }
+        case MD_BLOCK_OL: {
+            /* Ordered list: push onto list stack with start number */
+            if(ctx->list_depth < MD_LIST_MAX_DEPTH) {
+                MD_BLOCK_OL_DETAIL * ol = (MD_BLOCK_OL_DETAIL *)detail;
+                ctx->list_stack[ctx->list_depth].is_ordered = 1;
+                ctx->list_stack[ctx->list_depth].is_tight = ol->is_tight ? 1 : 0;
+                ctx->list_stack[ctx->list_depth].counter = ol->start;
+                ctx->list_depth++;
+            }
+            break;
+        }
+        case MD_BLOCK_LI: {
+            if(ctx->list_depth > 0) {
+                int level_idx = ctx->list_depth - 1;
+                if(ctx->list_stack[level_idx].is_tight) {
+                    /* Tight list: md4c skips P blocks, so create spangroup here */
+                    ctx->block_count++;
+
+                    lv_obj_t * sg = lv_spangroup_create(ctx->cur_container);
+                    lv_obj_set_width(sg, LV_PCT(100));
+                    lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
+                    lv_obj_set_style_text_font(sg, ctx->data->style.body_font, 0);
+                    lv_obj_set_style_text_color(sg, ctx->data->style.body_color, 0);
+
+                    /* Apply indentation */
+                    int32_t indent = ctx->data->style.list_indent * ctx->list_depth;
+                    lv_obj_set_style_pad_left(sg, indent, 0);
+
+                    /* Add bullet or number prefix */
+                    prepend_list_prefix(sg, ctx, level_idx);
+
+                    apply_block_spacing(sg, ctx);
+                    ctx->cur_span = sg;
+                }
+                else {
+                    /* Loose list: mark that the next P should get bullet/number */
+                    ctx->li_first_paragraph = 1;
+                }
+            }
+            break;
+        }
+        case MD_BLOCK_CODE: {
+            /* Fenced or indented code block: accumulate text, render on leave */
+            ctx->block_count++;
+            ctx->in_code_block = 1;
+            ctx->code_buf = NULL;
+            ctx->code_buf_len = 0;
+            ctx->code_buf_cap = 0;
+            break;
+        }
+        case MD_BLOCK_QUOTE: {
+            /* Blockquote: create a container with left border and padding */
+            ctx->block_count++;
+            const lv_markdown_style_t * s = &ctx->data->style;
+
+            lv_obj_t * bq = lv_obj_create(ctx->cur_container);
+            lv_obj_remove_style_all(bq);
+            lv_obj_set_width(bq, LV_PCT(100));
+            lv_obj_set_height(bq, LV_SIZE_CONTENT);
+            lv_obj_set_flex_flow(bq, LV_FLEX_FLOW_COLUMN);
+
+            /* Left border styling */
+            lv_obj_set_style_border_color(bq, s->blockquote_border_color, 0);
+            lv_obj_set_style_border_width(bq, s->blockquote_border_width, 0);
+            lv_obj_set_style_border_side(bq, LV_BORDER_SIDE_LEFT, 0);
+            lv_obj_set_style_border_opa(bq, LV_OPA_COVER, 0);
+
+            /* Left padding */
+            lv_obj_set_style_pad_left(bq, s->blockquote_pad_left, 0);
+
+            apply_block_spacing(bq, ctx);
+
+            /* Redirect child creation to the blockquote container */
+            ctx->cur_container = bq;
+            break;
+        }
         case MD_BLOCK_P:
         case MD_BLOCK_H: {
-            ctx->block_count++;
+            /* Don't count P blocks inside blockquotes as separate top-level blocks.
+             * The blockquote itself was already counted. */
+            if(ctx->cur_container == ctx->widget) {
+                ctx->block_count++;
+            }
             /* Create a spangroup for this paragraph/heading */
-            lv_obj_t * sg = lv_spangroup_create(ctx->widget);
+            lv_obj_t * sg = lv_spangroup_create(ctx->cur_container);
             lv_obj_set_width(sg, LV_PCT(100));
             lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
 
@@ -158,6 +335,18 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
             lv_obj_set_style_text_font(sg, font, 0);
             lv_obj_set_style_text_color(sg, color, 0);
 
+            /* Apply list indentation and bullet/number prefix if inside a list */
+            if(ctx->list_depth > 0 && type == MD_BLOCK_P) {
+                int32_t indent = ctx->data->style.list_indent * ctx->list_depth;
+                lv_obj_set_style_pad_left(sg, indent, 0);
+
+                /* Add bullet or number prefix on the first paragraph of a list item */
+                if(ctx->li_first_paragraph) {
+                    ctx->li_first_paragraph = 0;
+                    prepend_list_prefix(sg, ctx, ctx->list_depth - 1);
+                }
+            }
+
             apply_block_spacing(sg, ctx);
 
             ctx->cur_span = sg;
@@ -166,7 +355,7 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
         case MD_BLOCK_HR: {
             ctx->block_count++;
             /* Horizontal rule: a thin colored bar */
-            lv_obj_t * hr = lv_obj_create(ctx->widget);
+            lv_obj_t * hr = lv_obj_create(ctx->cur_container);
             lv_obj_remove_style_all(hr);
             lv_obj_set_width(hr, LV_PCT(100));
             lv_obj_set_height(hr, ctx->data->style.hr_height);
@@ -187,12 +376,84 @@ static int md_leave_block(MD_BLOCKTYPE type, void * detail, void * userdata)
 {
     md_render_ctx_t * ctx = (md_render_ctx_t *)userdata;
 
-    (void)type;
     (void)detail;
 
     ctx->block_depth--;
 
     switch(type) {
+        case MD_BLOCK_UL:
+        case MD_BLOCK_OL:
+            /* Pop from list stack */
+            if(ctx->list_depth > 0) {
+                ctx->list_depth--;
+            }
+            break;
+        case MD_BLOCK_LI: {
+            if(ctx->list_depth > 0) {
+                int level_idx = ctx->list_depth - 1;
+                /* For tight lists, finalize the spangroup created in LI enter */
+                if(ctx->list_stack[level_idx].is_tight && ctx->cur_span != NULL) {
+                    lv_spangroup_refresh(ctx->cur_span);
+                    ctx->cur_span = NULL;
+                }
+                /* Increment counter for ordered lists (for the next item) */
+                if(ctx->list_stack[level_idx].is_ordered) {
+                    ctx->list_stack[level_idx].counter++;
+                }
+            }
+            break;
+        }
+        case MD_BLOCK_CODE: {
+            /* Create code block container with accumulated text */
+            const lv_markdown_style_t * s = &ctx->data->style;
+
+            lv_obj_t * container = lv_obj_create(ctx->cur_container);
+            lv_obj_remove_style_all(container);
+            lv_obj_set_width(container, LV_PCT(100));
+            lv_obj_set_height(container, LV_SIZE_CONTENT);
+
+            /* Background + corner radius + padding */
+            lv_obj_set_style_bg_color(container, s->code_block_bg_color, 0);
+            lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(container, s->code_block_corner_radius, 0);
+            lv_obj_set_style_pad_all(container, s->code_block_pad, 0);
+
+            apply_block_spacing(container, ctx);
+
+            /* Create label inside the container with accumulated code text */
+            if(ctx->code_buf != NULL && ctx->code_buf_len > 0) {
+                /* Strip trailing newline if present (md4c adds one) */
+                if(ctx->code_buf[ctx->code_buf_len - 1] == '\n') {
+                    ctx->code_buf[ctx->code_buf_len - 1] = '\0';
+                    ctx->code_buf_len--;
+                }
+
+                lv_obj_t * label = lv_label_create(container);
+                lv_label_set_text(label, ctx->code_buf);
+                lv_obj_set_width(label, LV_PCT(100));
+
+                /* Apply code font + color */
+                const lv_font_t * font = s->code_font ? s->code_font : s->body_font;
+                lv_obj_set_style_text_font(label, font, 0);
+                lv_obj_set_style_text_color(label, s->code_color, 0);
+            }
+
+            /* Free code buffer */
+            if(ctx->code_buf != NULL) {
+                lv_free(ctx->code_buf);
+                ctx->code_buf = NULL;
+            }
+            ctx->code_buf_len = 0;
+            ctx->code_buf_cap = 0;
+            ctx->in_code_block = 0;
+            break;
+        }
+        case MD_BLOCK_QUOTE: {
+            /* Restore cur_container to parent */
+            lv_obj_t * parent = lv_obj_get_parent(ctx->cur_container);
+            ctx->cur_container = parent;
+            break;
+        }
         case MD_BLOCK_P:
         case MD_BLOCK_H:
             if(ctx->cur_span != NULL) {
@@ -259,6 +520,12 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR * text, MD_SIZE size, void * 
 
     (void)type;
 
+    /* Inside a code block: accumulate text into buffer */
+    if(ctx->in_code_block) {
+        code_buf_append(ctx, text, size);
+        return 0;
+    }
+
     if(ctx->cur_span == NULL) return 0;
 
     lv_span_t * span = lv_spangroup_add_span(ctx->cur_span);
@@ -313,15 +580,28 @@ static void lv_markdown_render(lv_obj_t * obj, lv_markdown_data_t * data)
     };
 
     md_render_ctx_t ctx = {
-        .widget      = obj,
-        .data        = data,
-        .cur_span    = NULL,
-        .block_count = 0,
-        .block_depth = 0,
-        .fmt_flags   = 0,
+        .widget             = obj,
+        .data               = data,
+        .cur_span           = NULL,
+        .cur_container      = obj,
+        .block_count        = 0,
+        .block_depth        = 0,
+        .fmt_flags          = 0,
+        .list_stack         = {{0}},
+        .list_depth         = 0,
+        .li_first_paragraph = 0,
+        .in_code_block      = 0,
+        .code_buf           = NULL,
+        .code_buf_len       = 0,
+        .code_buf_cap       = 0,
     };
 
     md_parse(data->text_ptr, (MD_SIZE)strlen(data->text_ptr), &parser, &ctx);
+
+    /* Safety: free code buffer if parsing was interrupted mid-block */
+    if(ctx.code_buf != NULL) {
+        lv_free(ctx.code_buf);
+    }
 
     data->block_count = ctx.block_count;
 }

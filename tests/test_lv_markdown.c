@@ -13,6 +13,8 @@
 
 #include "unity/unity.h"
 
+#include <string.h>
+
 /* Forward declarations for test runner */
 void setUp(void);
 void tearDown(void);
@@ -654,6 +656,434 @@ void test_markdown_bold_inside_heading(void)
     TEST_ASSERT_EQUAL_INT32(1, val.num);
 }
 
+/* ===== Bullet List Tests ===== */
+
+void test_markdown_bullet_list_creates_children(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Item 1\n- Item 2\n- Item 3");
+
+    /* Each list item's paragraph becomes a spangroup child */
+    TEST_ASSERT_EQUAL_UINT32(3, lv_obj_get_child_count(md));
+}
+
+void test_markdown_bullet_list_block_count(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Item 1\n- Item 2\n- Item 3");
+
+    TEST_ASSERT_EQUAL_UINT32(3, lv_markdown_get_block_count(md));
+}
+
+void test_markdown_bullet_list_has_indent(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Item 1");
+
+    lv_obj_t * child = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(child);
+
+    /* Default list_indent is 20, depth 1 => pad_left = 20 */
+    int32_t pad = lv_obj_get_style_pad_left(child, 0);
+    TEST_ASSERT_EQUAL_INT32(20, pad);
+}
+
+/* ===== Ordered List Tests ===== */
+
+void test_markdown_ordered_list_creates_children(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "1. First\n2. Second\n3. Third");
+
+    TEST_ASSERT_EQUAL_UINT32(3, lv_obj_get_child_count(md));
+}
+
+void test_markdown_ordered_list_block_count(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "1. First\n2. Second\n3. Third");
+
+    TEST_ASSERT_EQUAL_UINT32(3, lv_markdown_get_block_count(md));
+}
+
+/* ===== Nested List Tests ===== */
+
+void test_markdown_nested_bullet_list(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Outer\n  - Inner");
+
+    /* 2 list items total = 2 children */
+    TEST_ASSERT_EQUAL_UINT32(2, lv_obj_get_child_count(md));
+}
+
+void test_markdown_nested_list_indent_increases(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Outer\n  - Inner");
+
+    lv_obj_t * outer = lv_obj_get_child(md, 0);
+    lv_obj_t * inner = lv_obj_get_child(md, 1);
+    TEST_ASSERT_NOT_NULL(outer);
+    TEST_ASSERT_NOT_NULL(inner);
+
+    /* Outer: depth 1 => pad_left = 20, Inner: depth 2 => pad_left = 40 */
+    TEST_ASSERT_EQUAL_INT32(20, lv_obj_get_style_pad_left(outer, 0));
+    TEST_ASSERT_EQUAL_INT32(40, lv_obj_get_style_pad_left(inner, 0));
+}
+
+/* ===== Mixed Lists + Other Content ===== */
+
+void test_markdown_paragraph_then_list(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "Intro\n\n- Item 1\n- Item 2");
+
+    /* 1 paragraph + 2 list items = 3 children */
+    TEST_ASSERT_EQUAL_UINT32(3, lv_obj_get_child_count(md));
+}
+
+void test_markdown_list_then_paragraph(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Item\n\nAfter");
+
+    /* 1 list item + 1 paragraph = 2 children */
+    TEST_ASSERT_EQUAL_UINT32(2, lv_obj_get_child_count(md));
+}
+
+/* ===== Bullet Text Tests ===== */
+
+void test_markdown_bullet_list_has_bullet_span(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Hello");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(sg);
+
+    /* First span should be the bullet prefix, second span the text */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2, lv_spangroup_get_span_count(sg));
+
+    lv_span_t * bullet_span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(bullet_span);
+
+    /* Bullet span text should contain the bullet character */
+    const char * span_text = lv_span_get_text(bullet_span);
+    TEST_ASSERT_NOT_NULL(span_text);
+    /* Default bullet is "bullet" (UTF-8 0xE2 0x80 0xA2), check it contains that */
+    TEST_ASSERT_NOT_NULL(strstr(span_text, "\xe2\x80\xa2"));
+}
+
+void test_markdown_ordered_list_has_number_span(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "1. First\n2. Second");
+
+    /* Check first item has "1. " prefix */
+    lv_obj_t * sg0 = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(sg0);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2, lv_spangroup_get_span_count(sg0));
+
+    lv_span_t * num_span0 = lv_spangroup_get_child(sg0, 0);
+    const char * text0 = lv_span_get_text(num_span0);
+    TEST_ASSERT_NOT_NULL(text0);
+    TEST_ASSERT_NOT_NULL(strstr(text0, "1."));
+
+    /* Check second item has "2. " prefix */
+    lv_obj_t * sg1 = lv_obj_get_child(md, 1);
+    TEST_ASSERT_NOT_NULL(sg1);
+
+    lv_span_t * num_span1 = lv_spangroup_get_child(sg1, 0);
+    const char * text1 = lv_span_get_text(num_span1);
+    TEST_ASSERT_NOT_NULL(text1);
+    TEST_ASSERT_NOT_NULL(strstr(text1, "2."));
+}
+
+/* ===== List Edge Cases ===== */
+
+void test_markdown_single_item_list(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Only one");
+
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+}
+
+void test_markdown_empty_list_item(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "-\n- Second");
+
+    /* Should handle gracefully — at least the "Second" item appears */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+}
+
+void test_markdown_list_item_no_indent_on_regular_paragraph(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "Normal paragraph");
+
+    lv_obj_t * child = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(child);
+
+    /* Regular paragraph should NOT have list indentation */
+    int32_t pad = lv_obj_get_style_pad_left(child, 0);
+    TEST_ASSERT_EQUAL_INT32(0, pad);
+}
+
+void test_markdown_paragraph_after_list_no_indent(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "- Item\n\nAfter");
+
+    /* Second child is the paragraph after the list */
+    lv_obj_t * para = lv_obj_get_child(md, 1);
+    TEST_ASSERT_NOT_NULL(para);
+
+    /* Paragraph after list should NOT have list indentation */
+    int32_t pad = lv_obj_get_style_pad_left(para, 0);
+    TEST_ASSERT_EQUAL_INT32(0, pad);
+}
+
+/* ===== Code Block Tests ===== */
+
+void test_markdown_code_block_creates_child(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\ncode\n```");
+
+    /* Fenced code block should produce 1 child (container) */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+}
+
+void test_markdown_code_block_block_count(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\ncode\n```");
+
+    TEST_ASSERT_EQUAL_UINT32(1, lv_markdown_get_block_count(md));
+}
+
+void test_markdown_code_block_has_bg_color(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\ncode\n```");
+
+    lv_obj_t * child = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(child);
+
+    /* Default code_block_bg_color is (245, 245, 245) */
+    lv_color_t bg = lv_obj_get_style_bg_color(child, 0);
+    TEST_ASSERT_EQUAL_UINT32(245, bg.red);
+    TEST_ASSERT_EQUAL_UINT32(245, bg.green);
+    TEST_ASSERT_EQUAL_UINT32(245, bg.blue);
+}
+
+void test_markdown_code_block_has_padding(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\ncode\n```");
+
+    lv_obj_t * child = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(child);
+
+    /* Default code_block_pad is 8 */
+    TEST_ASSERT_EQUAL_INT32(8, lv_obj_get_style_pad_top(child, 0));
+    TEST_ASSERT_EQUAL_INT32(8, lv_obj_get_style_pad_bottom(child, 0));
+    TEST_ASSERT_EQUAL_INT32(8, lv_obj_get_style_pad_left(child, 0));
+    TEST_ASSERT_EQUAL_INT32(8, lv_obj_get_style_pad_right(child, 0));
+}
+
+void test_markdown_code_block_preserves_text(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\nhello world\n```");
+
+    lv_obj_t * container = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(container);
+
+    /* The container should have 1 child: the label */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, lv_obj_get_child_count(container));
+    lv_obj_t * label = lv_obj_get_child(container, 0);
+    TEST_ASSERT_NOT_NULL(label);
+
+    const char * text = lv_label_get_text(label);
+    TEST_ASSERT_NOT_NULL(text);
+    TEST_ASSERT_NOT_NULL(strstr(text, "hello world"));
+}
+
+void test_markdown_code_block_uses_code_font(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    lv_markdown_style_t style;
+    lv_markdown_style_init(&style);
+    style.code_font = LV_FONT_DEFAULT;
+    lv_markdown_set_style(md, &style);
+
+    lv_markdown_set_text(md, "```\ncode\n```");
+
+    lv_obj_t * container = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(container);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, lv_obj_get_child_count(container));
+
+    lv_obj_t * label = lv_obj_get_child(container, 0);
+    const lv_font_t * font = lv_obj_get_style_text_font(label, 0);
+    TEST_ASSERT_EQUAL_PTR(LV_FONT_DEFAULT, font);
+}
+
+void test_markdown_code_block_multiline(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\nline1\nline2\nline3\n```");
+
+    lv_obj_t * container = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(container);
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, lv_obj_get_child_count(container));
+
+    lv_obj_t * label = lv_obj_get_child(container, 0);
+    const char * text = lv_label_get_text(label);
+    TEST_ASSERT_NOT_NULL(text);
+    TEST_ASSERT_NOT_NULL(strstr(text, "line1"));
+    TEST_ASSERT_NOT_NULL(strstr(text, "line2"));
+    TEST_ASSERT_NOT_NULL(strstr(text, "line3"));
+}
+
+/* ===== Blockquote Tests ===== */
+
+void test_markdown_blockquote_creates_child(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> Quote");
+
+    /* Blockquote should produce 1 top-level child (the blockquote container) */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+}
+
+void test_markdown_blockquote_block_count(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> Quote");
+
+    TEST_ASSERT_EQUAL_UINT32(1, lv_markdown_get_block_count(md));
+}
+
+void test_markdown_blockquote_has_border(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> Quote");
+
+    lv_obj_t * child = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(child);
+
+    /* Default blockquote_border_color is (200, 200, 200) */
+    lv_color_t border = lv_obj_get_style_border_color(child, 0);
+    TEST_ASSERT_EQUAL_UINT32(200, border.red);
+    TEST_ASSERT_EQUAL_UINT32(200, border.green);
+    TEST_ASSERT_EQUAL_UINT32(200, border.blue);
+
+    /* Default blockquote_border_width is 3 */
+    int32_t bw = lv_obj_get_style_border_width(child, 0);
+    TEST_ASSERT_EQUAL_INT32(3, bw);
+}
+
+void test_markdown_blockquote_has_padding(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> Quote");
+
+    lv_obj_t * child = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(child);
+
+    /* Default blockquote_pad_left is 12 */
+    TEST_ASSERT_EQUAL_INT32(12, lv_obj_get_style_pad_left(child, 0));
+}
+
+void test_markdown_blockquote_contains_paragraph(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> Quote text");
+
+    lv_obj_t * bq = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(bq);
+
+    /* The blockquote container should have 1 child (the inner paragraph spangroup) */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(bq));
+}
+
+/* ===== Mixed Code Block / Blockquote Tests ===== */
+
+void test_markdown_paragraph_codeblock_paragraph(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "Before\n\n```\ncode\n```\n\nAfter");
+
+    /* paragraph + code block + paragraph = 3 children */
+    TEST_ASSERT_EQUAL_UINT32(3, lv_obj_get_child_count(md));
+}
+
+void test_markdown_blockquote_then_paragraph(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> Quote\n\nAfter");
+
+    /* blockquote + paragraph = 2 children */
+    TEST_ASSERT_EQUAL_UINT32(2, lv_obj_get_child_count(md));
+}
+
+/* ===== Edge Case Tests for Code Blocks / Blockquotes ===== */
+
+void test_markdown_empty_code_block(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "```\n```");
+
+    /* Should handle gracefully: 0 or 1 child, no crash */
+    uint32_t count = lv_obj_get_child_count(md);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(1, count);
+}
+
+void test_markdown_nested_blockquote(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> > Nested");
+
+    /* Should produce nested containers (outer blockquote with inner blockquote) */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+    lv_obj_t * outer = lv_obj_get_child(md, 0);
+    TEST_ASSERT_NOT_NULL(outer);
+
+    /* The outer blockquote should contain the inner blockquote */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, lv_obj_get_child_count(outer));
+}
+
+/* ===== Cross-Feature Tests ===== */
+
+void test_markdown_list_inside_blockquote(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> - Item 1\n> - Item 2");
+
+    /* 1 top-level child (blockquote container) */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+    lv_obj_t * bq = lv_obj_get_child(md, 0);
+    /* List items should be inside the blockquote */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(2, lv_obj_get_child_count(bq));
+}
+
+void test_markdown_code_block_inside_blockquote(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "> ```\n> code\n> ```");
+
+    /* 1 top-level child (blockquote container) */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+    lv_obj_t * bq = lv_obj_get_child(md, 0);
+    /* Code block container should be inside the blockquote */
+    TEST_ASSERT_GREATER_OR_EQUAL_UINT32(1, lv_obj_get_child_count(bq));
+}
+
 /* ===== Unity test runner ===== */
 
 int main(void)
@@ -733,6 +1163,61 @@ int main(void)
     /* Formatting edge cases */
     RUN_TEST(test_markdown_plain_spans_have_no_formatting);
     RUN_TEST(test_markdown_bold_inside_heading);
+
+    /* Bullet lists */
+    RUN_TEST(test_markdown_bullet_list_creates_children);
+    RUN_TEST(test_markdown_bullet_list_block_count);
+    RUN_TEST(test_markdown_bullet_list_has_indent);
+
+    /* Ordered lists */
+    RUN_TEST(test_markdown_ordered_list_creates_children);
+    RUN_TEST(test_markdown_ordered_list_block_count);
+
+    /* Nested lists */
+    RUN_TEST(test_markdown_nested_bullet_list);
+    RUN_TEST(test_markdown_nested_list_indent_increases);
+
+    /* Lists mixed with other content */
+    RUN_TEST(test_markdown_paragraph_then_list);
+    RUN_TEST(test_markdown_list_then_paragraph);
+
+    /* Bullet/number text */
+    RUN_TEST(test_markdown_bullet_list_has_bullet_span);
+    RUN_TEST(test_markdown_ordered_list_has_number_span);
+
+    /* List edge cases */
+    RUN_TEST(test_markdown_single_item_list);
+    RUN_TEST(test_markdown_empty_list_item);
+    RUN_TEST(test_markdown_list_item_no_indent_on_regular_paragraph);
+    RUN_TEST(test_markdown_paragraph_after_list_no_indent);
+
+    /* Code blocks */
+    RUN_TEST(test_markdown_code_block_creates_child);
+    RUN_TEST(test_markdown_code_block_block_count);
+    RUN_TEST(test_markdown_code_block_has_bg_color);
+    RUN_TEST(test_markdown_code_block_has_padding);
+    RUN_TEST(test_markdown_code_block_preserves_text);
+    RUN_TEST(test_markdown_code_block_uses_code_font);
+    RUN_TEST(test_markdown_code_block_multiline);
+
+    /* Blockquotes */
+    RUN_TEST(test_markdown_blockquote_creates_child);
+    RUN_TEST(test_markdown_blockquote_block_count);
+    RUN_TEST(test_markdown_blockquote_has_border);
+    RUN_TEST(test_markdown_blockquote_has_padding);
+    RUN_TEST(test_markdown_blockquote_contains_paragraph);
+
+    /* Mixed code block / blockquote */
+    RUN_TEST(test_markdown_paragraph_codeblock_paragraph);
+    RUN_TEST(test_markdown_blockquote_then_paragraph);
+
+    /* Code block / blockquote edge cases */
+    RUN_TEST(test_markdown_empty_code_block);
+    RUN_TEST(test_markdown_nested_blockquote);
+
+    /* Cross-feature */
+    RUN_TEST(test_markdown_list_inside_blockquote);
+    RUN_TEST(test_markdown_code_block_inside_blockquote);
 
     return UNITY_END();
 }
