@@ -388,6 +388,272 @@ void test_markdown_single_newline_no_break(void)
     TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
 }
 
+/* ===== Inline Formatting Helper ===== */
+
+/**
+ * Get a style property from a span's local style.
+ * Returns LV_STYLE_RES_FOUND if the property is set.
+ */
+static lv_style_res_t get_span_style_prop(lv_span_t * span, lv_style_prop_t prop, lv_style_value_t * value)
+{
+    lv_style_t * style = lv_span_get_style(span);
+    return lv_style_get_prop(style, prop, value);
+}
+
+/* ===== Bold Tests ===== */
+
+void test_markdown_bold_creates_spans(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "plain **bold** plain");
+
+    /* Should produce 1 spangroup with 3 spans */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    TEST_ASSERT_EQUAL_UINT32(3, lv_spangroup_get_span_count(sg));
+}
+
+void test_markdown_bold_with_font(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    lv_markdown_style_t style;
+    lv_markdown_style_init(&style);
+    style.bold_font = LV_FONT_DEFAULT; /* Use default as the "bold" font */
+    lv_markdown_set_style(md, &style);
+
+    lv_markdown_set_text(md, "**bold**");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_FONT, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_PTR(LV_FONT_DEFAULT, val.ptr);
+}
+
+void test_markdown_bold_fallback_letter_space(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    /* Leave bold_font = NULL (default), should use letter_space fallback */
+    lv_markdown_set_text(md, "**bold**");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    /* Faux bold: letter spacing increased by 1 */
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_LETTER_SPACE, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_INT32(1, val.num);
+}
+
+/* ===== Italic Tests ===== */
+
+void test_markdown_italic_with_font(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    lv_markdown_style_t style;
+    lv_markdown_style_init(&style);
+    style.italic_font = LV_FONT_DEFAULT;
+    lv_markdown_set_style(md, &style);
+
+    lv_markdown_set_text(md, "*italic*");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_FONT, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_PTR(LV_FONT_DEFAULT, val.ptr);
+}
+
+void test_markdown_italic_fallback_underline(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    /* Leave italic_font = NULL (default), should use underline fallback */
+    lv_markdown_set_text(md, "*italic*");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_DECOR, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_INT32(LV_TEXT_DECOR_UNDERLINE, val.num);
+}
+
+/* ===== Bold+Italic Tests ===== */
+
+void test_markdown_bold_italic_with_font(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    lv_markdown_style_t style;
+    lv_markdown_style_init(&style);
+    style.bold_italic_font = LV_FONT_DEFAULT;
+    lv_markdown_set_style(md, &style);
+
+    lv_markdown_set_text(md, "***both***");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_FONT, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_PTR(LV_FONT_DEFAULT, val.ptr);
+}
+
+void test_markdown_bold_italic_fallback(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    /* Leave all emphasis fonts NULL — should get letter_space + underline */
+    lv_markdown_set_text(md, "***both***");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    /* Should have underline (italic fallback) */
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_DECOR, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_INT32(LV_TEXT_DECOR_UNDERLINE, val.num);
+
+    /* Should have letter_space (bold fallback) */
+    res = get_span_style_prop(span, LV_STYLE_TEXT_LETTER_SPACE, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_INT32(1, val.num);
+}
+
+/* ===== Inline Code Tests ===== */
+
+void test_markdown_inline_code_with_font(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    lv_markdown_style_t style;
+    lv_markdown_style_init(&style);
+    style.code_font = LV_FONT_DEFAULT;
+    lv_markdown_set_style(md, &style);
+
+    lv_markdown_set_text(md, "`code`");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_FONT, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_PTR(LV_FONT_DEFAULT, val.ptr);
+}
+
+void test_markdown_inline_code_color(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    lv_markdown_style_t style;
+    lv_markdown_style_init(&style);
+    style.code_color = lv_color_make(255, 0, 0);
+    lv_markdown_set_style(md, &style);
+
+    lv_markdown_set_text(md, "`code`");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_COLOR, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_UINT32(255, val.color.red);
+    TEST_ASSERT_EQUAL_UINT32(0, val.color.green);
+    TEST_ASSERT_EQUAL_UINT32(0, val.color.blue);
+}
+
+void test_markdown_inline_code_fallback_body_font(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+
+    /* Leave code_font = NULL — should use body_font */
+    lv_markdown_set_text(md, "`code`");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    lv_span_t * span = lv_spangroup_get_child(sg, 0);
+    TEST_ASSERT_NOT_NULL(span);
+
+    /* Font should be set to body_font (LV_FONT_DEFAULT) */
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(span, LV_STYLE_TEXT_FONT, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_PTR(LV_FONT_DEFAULT, val.ptr);
+}
+
+/* ===== Mixed Formatting Tests ===== */
+
+void test_markdown_multiple_formats_in_paragraph(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "normal **bold** and *italic* text");
+
+    /* Should produce 1 spangroup */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    /* "normal " + "bold" + " and " + "italic" + " text" = 5 spans */
+    TEST_ASSERT_EQUAL_UINT32(5, lv_spangroup_get_span_count(sg));
+}
+
+/* ===== Formatting Edge Cases ===== */
+
+void test_markdown_plain_spans_have_no_formatting(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "plain **bold** plain");
+
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    /* Span 0 = "plain ", span 2 = " plain" — should have no formatting */
+    lv_span_t * span0 = lv_spangroup_get_child(sg, 0);
+    lv_span_t * span2 = lv_spangroup_get_child(sg, 2);
+
+    lv_style_value_t val;
+    TEST_ASSERT_NOT_EQUAL(LV_STYLE_RES_FOUND, get_span_style_prop(span0, LV_STYLE_TEXT_LETTER_SPACE, &val));
+    TEST_ASSERT_NOT_EQUAL(LV_STYLE_RES_FOUND, get_span_style_prop(span0, LV_STYLE_TEXT_DECOR, &val));
+    TEST_ASSERT_NOT_EQUAL(LV_STYLE_RES_FOUND, get_span_style_prop(span2, LV_STYLE_TEXT_LETTER_SPACE, &val));
+    TEST_ASSERT_NOT_EQUAL(LV_STYLE_RES_FOUND, get_span_style_prop(span2, LV_STYLE_TEXT_DECOR, &val));
+}
+
+void test_markdown_bold_inside_heading(void)
+{
+    lv_obj_t * md = lv_markdown_create(lv_screen_active());
+    lv_markdown_set_text(md, "# Hello **world**");
+
+    /* 1 child (heading spangroup), 2 spans ("Hello " + "world") */
+    TEST_ASSERT_EQUAL_UINT32(1, lv_obj_get_child_count(md));
+    lv_obj_t * sg = lv_obj_get_child(md, 0);
+    TEST_ASSERT_EQUAL_UINT32(2, lv_spangroup_get_span_count(sg));
+
+    /* Second span should have bold fallback (letter_space) */
+    lv_span_t * bold_span = lv_spangroup_get_child(sg, 1);
+    lv_style_value_t val;
+    lv_style_res_t res = get_span_style_prop(bold_span, LV_STYLE_TEXT_LETTER_SPACE, &val);
+    TEST_ASSERT_EQUAL(LV_STYLE_RES_FOUND, res);
+    TEST_ASSERT_EQUAL_INT32(1, val.num);
+}
+
 /* ===== Unity test runner ===== */
 
 int main(void)
@@ -442,6 +708,31 @@ int main(void)
     /* Edge cases */
     RUN_TEST(test_markdown_only_newlines);
     RUN_TEST(test_markdown_single_newline_no_break);
+
+    /* Bold */
+    RUN_TEST(test_markdown_bold_creates_spans);
+    RUN_TEST(test_markdown_bold_with_font);
+    RUN_TEST(test_markdown_bold_fallback_letter_space);
+
+    /* Italic */
+    RUN_TEST(test_markdown_italic_with_font);
+    RUN_TEST(test_markdown_italic_fallback_underline);
+
+    /* Bold + Italic */
+    RUN_TEST(test_markdown_bold_italic_with_font);
+    RUN_TEST(test_markdown_bold_italic_fallback);
+
+    /* Inline code */
+    RUN_TEST(test_markdown_inline_code_with_font);
+    RUN_TEST(test_markdown_inline_code_color);
+    RUN_TEST(test_markdown_inline_code_fallback_body_font);
+
+    /* Mixed formatting */
+    RUN_TEST(test_markdown_multiple_formats_in_paragraph);
+
+    /* Formatting edge cases */
+    RUN_TEST(test_markdown_plain_spans_have_no_formatting);
+    RUN_TEST(test_markdown_bold_inside_heading);
 
     return UNITY_END();
 }

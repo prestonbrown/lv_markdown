@@ -15,6 +15,12 @@ typedef struct {
     uint32_t               block_count; /**< Number of top-level blocks */
 } lv_markdown_data_t;
 
+/* --- Inline formatting flags (can be combined) --- */
+
+#define MD_FMT_BOLD   (1 << 0)
+#define MD_FMT_ITALIC (1 << 1)
+#define MD_FMT_CODE   (1 << 2)
+
 /* --- md4c renderer state --- */
 
 typedef struct {
@@ -23,7 +29,88 @@ typedef struct {
     lv_obj_t *             cur_span;    /**< Current spangroup being built */
     uint32_t               block_count; /**< Running count of top-level blocks */
     int                    block_depth; /**< Nesting depth for blocks */
+    uint8_t                fmt_flags;   /**< Active inline formatting (MD_FMT_*) */
 } md_render_ctx_t;
+
+/* --- Inline formatting helper --- */
+
+/**
+ * Apply inline formatting styles to a span based on the active fmt_flags.
+ *
+ * Font selection priority:
+ *   - BOLD+ITALIC: bold_italic_font > bold_font > italic_font > fallbacks
+ *   - BOLD:        bold_font > letter_space fallback
+ *   - ITALIC:      italic_font > underline fallback
+ *   - CODE:        code_font > body_font, plus code_color
+ *
+ * Fallback note: LVGL spangroups do not support per-span shadow styles,
+ * so faux-bold uses increased letter_space (+1) instead of text shadow.
+ */
+static void apply_span_formatting(lv_span_t * span, md_render_ctx_t * ctx)
+{
+    const lv_markdown_style_t * s = &ctx->data->style;
+    uint8_t flags = ctx->fmt_flags;
+    lv_style_t * style = lv_span_get_style(span);
+
+    if(flags & MD_FMT_CODE) {
+        /* Inline code: font + color. Code suppresses bold/italic per markdown spec. */
+        const lv_font_t * font = s->code_font ? s->code_font : s->body_font;
+        lv_style_set_text_font(style, font);
+        lv_style_set_text_color(style, s->code_color);
+        /* code_bg_color is a documented limitation: LVGL spangroups
+         * don't support per-span backgrounds, so skip it. */
+        return;
+    }
+
+    int is_bold   = (flags & MD_FMT_BOLD) != 0;
+    int is_italic = (flags & MD_FMT_ITALIC) != 0;
+
+    if(is_bold && is_italic) {
+        /* Bold+Italic: try dedicated font first */
+        if(s->bold_italic_font != NULL) {
+            lv_style_set_text_font(style, s->bold_italic_font);
+            return;
+        }
+        /* Try bold font with italic fallback */
+        if(s->bold_font != NULL) {
+            lv_style_set_text_font(style, s->bold_font);
+            lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
+            return;
+        }
+        /* Try italic font with bold fallback */
+        if(s->italic_font != NULL) {
+            lv_style_set_text_font(style, s->italic_font);
+            lv_style_set_text_letter_space(style, 1);
+            return;
+        }
+        /* All NULL: combine both fallbacks */
+        lv_style_set_text_letter_space(style, 1);
+        lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
+        return;
+    }
+
+    if(is_bold) {
+        if(s->bold_font != NULL) {
+            lv_style_set_text_font(style, s->bold_font);
+        }
+        else {
+            /* Faux bold via letter spacing (+1px) */
+            lv_style_set_text_letter_space(style, 1);
+        }
+        return;
+    }
+
+    if(is_italic) {
+        if(s->italic_font != NULL) {
+            lv_style_set_text_font(style, s->italic_font);
+        }
+        else {
+            /* Italic fallback via underline decoration */
+            lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
+        }
+        return;
+    }
+}
 
 /* --- Block spacing helper --- */
 
@@ -122,18 +209,47 @@ static int md_leave_block(MD_BLOCKTYPE type, void * detail, void * userdata)
 
 static int md_enter_span(MD_SPANTYPE type, void * detail, void * userdata)
 {
-    (void)type;
+    md_render_ctx_t * ctx = (md_render_ctx_t *)userdata;
+
     (void)detail;
-    (void)userdata;
-    /* Inline formatting handled in text callback for now */
+
+    switch(type) {
+        case MD_SPAN_STRONG:
+            ctx->fmt_flags |= MD_FMT_BOLD;
+            break;
+        case MD_SPAN_EM:
+            ctx->fmt_flags |= MD_FMT_ITALIC;
+            break;
+        case MD_SPAN_CODE:
+            ctx->fmt_flags |= MD_FMT_CODE;
+            break;
+        default:
+            break;
+    }
+
     return 0;
 }
 
 static int md_leave_span(MD_SPANTYPE type, void * detail, void * userdata)
 {
-    (void)type;
+    md_render_ctx_t * ctx = (md_render_ctx_t *)userdata;
+
     (void)detail;
-    (void)userdata;
+
+    switch(type) {
+        case MD_SPAN_STRONG:
+            ctx->fmt_flags &= ~MD_FMT_BOLD;
+            break;
+        case MD_SPAN_EM:
+            ctx->fmt_flags &= ~MD_FMT_ITALIC;
+            break;
+        case MD_SPAN_CODE:
+            ctx->fmt_flags &= ~MD_FMT_CODE;
+            break;
+        default:
+            break;
+    }
+
     return 0;
 }
 
@@ -156,6 +272,11 @@ static int md_text(MD_TEXTTYPE type, const MD_CHAR * text, MD_SIZE size, void * 
 
     lv_span_set_text(span, tmp);
     lv_free(tmp);
+
+    /* Apply inline formatting (bold, italic, code) if any flags are active */
+    if(ctx->fmt_flags != 0) {
+        apply_span_formatting(span, ctx);
+    }
 
     return 0;
 }
@@ -197,6 +318,7 @@ static void lv_markdown_render(lv_obj_t * obj, lv_markdown_data_t * data)
         .cur_span    = NULL,
         .block_count = 0,
         .block_depth = 0,
+        .fmt_flags   = 0,
     };
 
     md_parse(data->text_ptr, (MD_SIZE)strlen(data->text_ptr), &parser, &ctx);

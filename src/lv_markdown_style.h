@@ -19,11 +19,14 @@ extern "C" {
  *
  * All font pointers are optional except body_font. When a font is NULL,
  * a fallback strategy is used:
- *   - bold_font:        faux bold via text shadow (1px offset, same color)
+ *   - bold_font:        faux bold via increased letter spacing (+1px)
  *   - italic_font:      underline decoration
- *   - bold_italic_font: faux bold + underline
+ *   - bold_italic_font: faux bold + underline combined
  *   - heading_font[N]:  falls back to body_font
  *   - code_font:        falls back to body_font
+ *
+ * Note: LVGL spangroups do not support per-span shadow or background
+ * styles, so code_bg_color has no effect (documented limitation).
  */
 typedef struct {
     /* Body text — the base everything derives from */
