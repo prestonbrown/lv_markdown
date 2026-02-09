@@ -253,6 +253,7 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
                     lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
                     lv_obj_set_style_text_font(sg, ctx->data->style.body_font, 0);
                     lv_obj_set_style_text_color(sg, ctx->data->style.body_color, 0);
+                    lv_obj_set_style_text_line_space(sg, ctx->data->style.line_spacing, 0);
 
                     /* Apply indentation */
                     int32_t indent = ctx->data->style.list_indent * ctx->list_depth;
@@ -334,6 +335,7 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
 
             lv_obj_set_style_text_font(sg, font, 0);
             lv_obj_set_style_text_color(sg, color, 0);
+            lv_obj_set_style_text_line_space(sg, ctx->data->style.line_spacing, 0);
 
             /* Apply list indentation and bullet/number prefix if inside a list */
             if(ctx->list_depth > 0 && type == MD_BLOCK_P) {
