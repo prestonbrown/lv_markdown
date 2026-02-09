@@ -25,6 +25,15 @@ typedef struct {
     int                    block_depth; /**< Nesting depth for blocks */
 } md_render_ctx_t;
 
+/* --- Block spacing helper --- */
+
+static void apply_block_spacing(lv_obj_t * block, md_render_ctx_t * ctx)
+{
+    if(lv_obj_get_child_count(ctx->widget) > 1) {
+        lv_obj_set_style_margin_top(block, ctx->data->style.paragraph_spacing, 0);
+    }
+}
+
 /* --- md4c callbacks --- */
 
 static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
@@ -62,10 +71,7 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
             lv_obj_set_style_text_font(sg, font, 0);
             lv_obj_set_style_text_color(sg, color, 0);
 
-            /* Add spacing between blocks */
-            if(lv_obj_get_child_count(ctx->widget) > 1) {
-                lv_obj_set_style_margin_top(sg, ctx->data->style.paragraph_spacing, 0);
-            }
+            apply_block_spacing(sg, ctx);
 
             ctx->cur_span = sg;
             break;
@@ -80,9 +86,7 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
             lv_obj_set_style_bg_color(hr, ctx->data->style.hr_color, 0);
             lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
 
-            if(lv_obj_get_child_count(ctx->widget) > 1) {
-                lv_obj_set_style_margin_top(hr, ctx->data->style.paragraph_spacing, 0);
-            }
+            apply_block_spacing(hr, ctx);
             break;
         }
         default:
