@@ -250,7 +250,6 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
 
                     lv_obj_t * sg = lv_spangroup_create(ctx->cur_container);
                     lv_obj_set_width(sg, LV_PCT(100));
-                    lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
                     lv_obj_set_style_text_font(sg, ctx->data->style.body_font, 0);
                     lv_obj_set_style_text_color(sg, ctx->data->style.body_color, 0);
                     lv_obj_set_style_text_line_space(sg, ctx->data->style.line_spacing, 0);
@@ -317,7 +316,6 @@ static int md_enter_block(MD_BLOCKTYPE type, void * detail, void * userdata)
             /* Create a spangroup for this paragraph/heading */
             lv_obj_t * sg = lv_spangroup_create(ctx->cur_container);
             lv_obj_set_width(sg, LV_PCT(100));
-            lv_spangroup_set_mode(sg, LV_SPAN_MODE_BREAK);
 
             const lv_font_t * font = ctx->data->style.body_font;
             lv_color_t color = ctx->data->style.body_color;
