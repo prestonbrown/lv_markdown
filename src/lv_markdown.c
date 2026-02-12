@@ -130,11 +130,11 @@ static void apply_span_formatting(lv_span_t * span, md_render_ctx_t * ctx)
         /* Try italic font with bold fallback */
         if(s->italic_font != NULL) {
             lv_style_set_text_font(style, s->italic_font);
-            lv_style_set_text_letter_space(style, 1);
+            lv_style_set_text_letter_space(style, 2);
             return;
         }
         /* All NULL: combine both fallbacks */
-        lv_style_set_text_letter_space(style, 1);
+        lv_style_set_text_letter_space(style, 2);
         lv_style_set_text_decor(style, LV_TEXT_DECOR_UNDERLINE);
         return;
     }
@@ -144,8 +144,8 @@ static void apply_span_formatting(lv_span_t * span, md_render_ctx_t * ctx)
             lv_style_set_text_font(style, s->bold_font);
         }
         else {
-            /* Faux bold via letter spacing (+1px) */
-            lv_style_set_text_letter_space(style, 1);
+            /* Faux bold via letter spacing (+2px) */
+            lv_style_set_text_letter_space(style, 2);
         }
         return;
     }
